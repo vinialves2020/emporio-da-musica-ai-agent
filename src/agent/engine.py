@@ -357,11 +357,12 @@ class EmporioAgent:
                 "Por política da loja (Seções 1 e 7.1), **não comercializamos acessórios avulsos** como encordoamentos/cordas, palhetas, cabos, cases/capas, pedais, boquilhas avulsas ou amplificadores.\n\n"
                 "💡 *Dica de amigo músico:* Para esses acessórios aqui em Campo Grande, recomendamos dar uma olhada nas lojas parceiras de acessórios e luthierias locais do Centro!"
             )
-            # If the message ONLY asked about accessories, return immediately with a warm closing
-            if not any(
+            # If the message ONLY asked about accessories (even if it says "encordoamento de violão" or "cabo de guitarra"), return immediately
+            has_specific_model_or_price = any(
                 w in msg_norm
-                for w in ("violao", "violoes", "guitarra", "baixo", "bateria", "teclado", "ukulele", "takamine", "yamaha", "fender", "taylor", "pedido", "endereco", "horario")
-            ):
+                for w in ("takamine", "yamaha", "fender", "taylor", "giannini", "tagima", "rozini", "shelby", "crafter", "martin", "kala", "ohana", "kalani", "quanto custa", "opcoes", "ate r$")
+            )
+            if not has_specific_model_or_price:
                 return AgentResponse(
                     reply=(
                         f"Olá! Tudo bem? 🎶\n\n{accessory_section_text}\n\n"
@@ -851,11 +852,16 @@ class EmporioAgent:
             )
 
         # Case A: Single specific product query (e.g., "Quanto custa o Takamine GD20?", "Tem o Giannini GF-3D?")
-        if len(products) == 1 or (
+        is_specific_model_match = bool(
             search_params.get("query")
-            and len(products) <= 2
+            and products
+            and (
+                len(search_params["query"].split()) >= 2
+                or normalize_text(search_params["query"]) in ("gf-3d", "sn-7c", "ka-abp-ctg", "rg550", "ht-100", "110e", "214ce", "ck-20", "kal-700t")
+            )
             and normalize_text(search_params["query"]) in normalize_text(products[0]["name"])
-        ):
+        )
+        if len(products) == 1 or is_specific_model_match:
             p = products[0]
             lines = [f"🎸 **{p['name']}** *(Código #{p['product_id']} — Categoria: {p['category_name']})*"]
             lines.append(f"- **Descrição:** {p['description']}")

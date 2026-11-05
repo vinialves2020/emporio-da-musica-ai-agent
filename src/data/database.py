@@ -361,7 +361,6 @@ class StoreDatabase:
         # 6. Query text matching (exact substring + token overlap + RapidFuzz similarity)
         if query and query.strip():
             q_norm = normalize_text(query)
-            # Remove generic stopwords that might dilute search
             stopwords = {
                 "violao",
                 "violoes",
@@ -381,27 +380,31 @@ class StoreDatabase:
             }
             q_tokens = [t for t in q_norm.split() if t not in stopwords] or q_norm.split()
 
-            scored_rows: list[tuple[float, dict[str, Any]]] = []
-            for r in rows:
-                searchable = f"{r['name_norm']} {r['desc_norm']} {normalize_text(r['category_name'] or '')}"
-                # Direct substring or token check
-                exact_in_name = q_norm in r["name_norm"]
-                token_hits = sum(1 for t in q_tokens if t in searchable)
-                token_ratio = token_hits / max(len(q_tokens), 1)
-                fuzzy_name = fuzz.partial_ratio(q_norm, r["name_norm"]) / 100.0
-                fuzzy_full = fuzz.token_set_ratio(q_norm, searchable) / 100.0
+            # Check if there is an exact substring match in product name first
+            exact_name_matches = [r for r in rows if q_norm in r["name_norm"]]
+            if exact_name_matches and len(q_tokens) >= 2:
+                rows = exact_name_matches
+            else:
+                scored_rows: list[tuple[float, dict[str, Any]]] = []
+                for r in rows:
+                    searchable = f"{r['name_norm']} {r['desc_norm']} {normalize_text(r['category_name'] or '')}"
+                    exact_in_name = q_norm in r["name_norm"]
+                    token_hits = sum(1 for t in q_tokens if t in searchable)
+                    token_ratio = token_hits / max(len(q_tokens), 1)
+                    fuzzy_name = fuzz.partial_ratio(q_norm, r["name_norm"]) / 100.0
+                    fuzzy_full = fuzz.token_set_ratio(q_norm, searchable) / 100.0
 
-                score = (
-                    (2.0 if exact_in_name else 0.0)
-                    + (1.5 * token_ratio)
-                    + (0.8 * fuzzy_name)
-                    + (0.5 * fuzzy_full)
-                )
-                if exact_in_name or token_ratio >= 0.5 or fuzzy_name >= 0.72:
-                    scored_rows.append((score, r))
+                    score = (
+                        (2.0 if exact_in_name else 0.0)
+                        + (1.5 * token_ratio)
+                        + (0.8 * fuzzy_name)
+                        + (0.5 * fuzzy_full)
+                    )
+                    if exact_in_name or token_ratio >= 0.5 or fuzzy_name >= 0.72:
+                        scored_rows.append((score, r))
 
-            scored_rows.sort(key=lambda x: (-x[0], float(x[1]["effective_price_brl"])))
-            rows = [r for _, r in scored_rows]
+                scored_rows.sort(key=lambda x: (-x[0], float(x[1]["effective_price_brl"])))
+                rows = [r for _, r in scored_rows]
         else:
             # Sort by in-stock active first, then by price ascending
             rows.sort(
@@ -488,7 +491,7 @@ class StoreDatabase:
                     if has_promo
                     else "Includes 5% PIX cash discount off list price"
                 ),
-                "max_interest_free_installments": f"{installments['max_interest_free_installments']}x of R$ {installments['installment_value_brl']:.2f} interest-free on Credit Card",
+                "max_interest_free_installments": f"Até {installments['max_interest_free_installments']}x de R$ {installments['installment_value_brl']:.2f} sem juros no Cartão de Crédito",
                 "allows_combined_payment": installments["allows_combined_payment"],
             },
             "description": r["description"],
@@ -763,7 +766,7 @@ class StoreDatabase:
                 "can_exchange_for_preference_7d": False,
                 "can_exchange_for_defect_store_30d": False,
                 "under_legal_warranty_90d": False,
-                "explanation": f"Order #{order_row['order_id']} has status 'cancelled' ({order_row.get('notes') or 'no reason recorded'}).",
+                "explanation": f"O Pedido #{order_row['order_id']} já consta com status 'cancelado' ({order_row.get('notes') or 'sem motivo registrado'}).",
             }
 
         if status in ("pending", "confirmed"):
@@ -773,9 +776,9 @@ class StoreDatabase:
                 "can_exchange_for_defect_store_30d": True,
                 "under_legal_warranty_90d": True,
                 "explanation": (
-                    f"Order #{order_row['order_id']} is '{status}' and has not been delivered yet. "
-                    "The customer can request immediate cancellation/modification, or exercise the 7-day Right of Regret (CDC Art. 49) "
-                    "within 7 calendar days after receiving the product."
+                    f"O Pedido #{order_row['order_id']} está com status '{status}' e ainda não foi entregue. "
+                    "O cliente pode solicitar o cancelamento/alteração imediata ou exercer o Direito de Arrependimento (Seção 4.1 — CDC) "
+                    "em até 7 dias corridos após o recebimento."
                 ),
             }
 
@@ -786,9 +789,9 @@ class StoreDatabase:
                 "can_exchange_for_defect_store_30d": True,
                 "under_legal_warranty_90d": True,
                 "explanation": (
-                    f"Order #{order_row['order_id']} is currently in transit ('shipped', tracking: {order_row.get('tracking_code')}, "
-                    f"estimated delivery: {est_delivery_str}). Once received, the customer has 7 calendar days for regret return "
-                    "(free return shipping, refund in up to 10 business days) or preference exchange."
+                    f"O Pedido #{order_row['order_id']} está em trânsito ('shipped', rastreio: {order_row.get('tracking_code')}, "
+                    f"previsão de entrega: {est_delivery_str}). Assim que receber o produto, você terá 7 dias corridos para exercer o "
+                    "Direito de Arrependimento (frete de devolução por conta da loja e reembolso em até 10 dias úteis) ou Troca por Preferência."
                 ),
             }
 
@@ -812,10 +815,10 @@ class StoreDatabase:
             "can_exchange_for_defect_store_30d": defect_store_ok,
             "under_legal_warranty_90d": legal_warranty_ok,
             "explanation": (
-                f"Delivered on {est_delivery_str} ({days_since_delivery} days ago) and purchased on {order_date_str} ({days_since_purchase} days ago) "
-                f"relative to reference date {reference_date.isoformat()}. "
-                f"7-day Regret Return / Preference Exchange: {'ELIGIBLE' if regret_ok else 'EXPIRED (>7 calendar days since delivery)'}. "
-                f"30-day Store Defect Exchange: {'ELIGIBLE' if defect_store_ok else 'EXPIRED (>30 calendar days since purchase; customer must use Manufacturer Warranty with optional store mediation)'}. "
-                f"90-day Legal Warranty (CDC): {'ACTIVE' if legal_warranty_ok else 'EXPIRED (>90 calendar days since delivery; check Manufacturer Warranty 6m-2y)'}."
+                f"Entregue em {est_delivery_str} (há {days_since_delivery} dias) e comprado em {order_date_str} (há {days_since_purchase} dias) "
+                f"considerando a data de referência {reference_date.isoformat()}. "
+                f"Arrependimento / Troca por Preferência (7 dias corridos do recebimento): {'ELEGÍVEL' if regret_ok else 'PRAZO EXPIRADO (>7 dias corridos após o recebimento)'}. "
+                f"Troca Direta na Loja por Defeito (30 dias corridos da compra): {'ELEGÍVEL' if defect_store_ok else 'PRAZO EXPIRADO (>30 dias da compra; acionar Garantia do Fabricante com intermediação da loja)'}. "
+                f"Garantia Legal CDC (90 dias do recebimento): {'VIGENTE' if legal_warranty_ok else 'EXPIRADA (>90 dias do recebimento; verificar Garantia do Fabricante de 6m a 2 anos)'}."
             ),
         }
